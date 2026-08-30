@@ -1,0 +1,5 @@
+{
+  "key": "small-ruby-v1",
+  "language": "ruby",
+  "test_command": "ruby -Itest test/price_calculator_test.rb"
+}
