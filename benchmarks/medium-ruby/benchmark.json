@@ -1,0 +1,9 @@
+{
+  "key": "medium-ruby-v1",
+  "language": "ruby",
+  "test_command": "ruby -Itest test/checkout_total_test.rb",
+  "editable_paths": [
+    "lib/checkout_total.rb",
+    "lib/promotion.rb"
+  ]
+}
