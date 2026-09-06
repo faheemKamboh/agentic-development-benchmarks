@@ -1,4 +1,4 @@
-name: Rails specialist benchmark
+name: Rails model bake-off
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - rails-specialist-benchmark
     paths:
       - .github/workflows/rails-specialist-benchmark.yml
+      - rails_specialist_benchmark.py
   workflow_dispatch:
 
 permissions:
@@ -13,38 +14,47 @@ permissions:
 
 jobs:
   benchmark:
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - slug: qwen35-4b
+            label: Qwen3.5-4B Q4_K_M
+            hf: bartowski/Qwen_Qwen3.5-4B-GGUF:Q4_K_M
+          - slug: qwen35-9b
+            label: Qwen3.5-9B Q4_K_M
+            hf: bartowski/Qwen_Qwen3.5-9B-GGUF:Q4_K_M
+          - slug: lfm25-26b
+            label: LFM2.5-2.6B Q4_K_M
+            hf: LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M
+
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      MODEL_SLUG: ${{ matrix.slug }}
+      MODEL_LABEL: ${{ matrix.label }}
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Show runner resources
         run: |
+          echo "Model: ${MODEL_LABEL}"
           nproc
           free -h
           df -h /
 
-      - name: Download Rails specialist
-        run: |
-          set -euo pipefail
-          python3 -m venv /tmp/hf
-          /tmp/hf/bin/pip install -q --upgrade pip
-          /tmp/hf/bin/pip install -q 'huggingface_hub[hf_xet]'
-          mkdir -p /tmp/rails-model
-          export HF_XET_HIGH_PERFORMANCE=1
-          /tmp/hf/bin/python -c "from huggingface_hub import hf_hub_download; print(hf_hub_download(repo_id='bytecodehr/qwen3-8b-rails', filename='qwen3-8b-rails-Q4_K_M.gguf', local_dir='/tmp/rails-model'))"
-          ls -lh /tmp/rails-model/qwen3-8b-rails-Q4_K_M.gguf
-
-      - name: Start model
+      - name: Start ${{ matrix.label }}
         run: |
           set -euo pipefail
           docker pull ghcr.io/ggml-org/llama.cpp:server
           docker run -d --rm \
-            --name rails-llm \
+            --name benchmark-llm \
             --network host \
-            -v /tmp/rails-model:/models:ro \
             ghcr.io/ggml-org/llama.cpp:server \
-            -m /models/qwen3-8b-rails-Q4_K_M.gguf \
+            -hf "${{ matrix.hf }}" \
+            --alias "${MODEL_SLUG}" \
             --host 127.0.0.1 \
             --port 8080 \
             -c 4096 \
@@ -55,15 +65,21 @@ jobs:
             --cache-type-v q8_0 \
             --reasoning off \
             --no-ui
-          for i in $(seq 1 180); do
-            curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1 && exit 0
-            if ! docker ps --format '{{.Names}}' | grep -qx rails-llm; then
-              docker logs rails-llm || true
+
+          for i in $(seq 1 300); do
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
+              echo "${MODEL_LABEL} ready"
+              free -h
+              exit 0
+            fi
+            if ! docker ps --format '{{.Names}}' | grep -qx benchmark-llm; then
+              echo "Model container exited:"
+              docker logs benchmark-llm || true
               exit 1
             fi
             sleep 2
           done
-          docker logs rails-llm || true
+          docker logs benchmark-llm || true
           exit 1
 
       - name: Run freshFruit repo benchmark
@@ -72,6 +88,6 @@ jobs:
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: rails-specialist-results
+          name: rails-benchmark-${{ matrix.slug }}
           path: benchmark-output/
           retention-days: 3
