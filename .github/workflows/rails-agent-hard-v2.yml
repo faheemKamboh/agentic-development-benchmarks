@@ -7,6 +7,7 @@ on:
       - .github/workflows/rails-agent-hard-v2.yml
       - rails_active_agent_v2.py
       - scripts/build_rails_agent_fixture_v2.sh
+      - scripts/build_rails_agent_fixture_v2_compat.sh
       - scripts/grade_rails_agent_fixture_v2.sh
   workflow_dispatch:
 
@@ -47,7 +48,7 @@ jobs:
           df -h /
 
       - name: Build isolated Rails security fixture
-        run: bash scripts/build_rails_agent_fixture_v2.sh
+        run: bash scripts/build_rails_agent_fixture_v2_compat.sh
 
       - name: Start ${{ matrix.label }}
         run: |
