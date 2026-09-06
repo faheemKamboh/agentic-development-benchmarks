@@ -7,7 +7,11 @@ from pathlib import Path
 API = "http://127.0.0.1:8080/v1/chat/completions"
 MODEL_LABEL = os.environ.get("MODEL_LABEL", "local-model")
 MODEL_SLUG = os.environ.get("MODEL_SLUG", "local-model")
-SYSTEM = "You are a senior Ruby on Rails engineer reviewing a real application. Be precise, identify concrete bugs from the supplied code, prefer idiomatic Rails fixes, and do not invent behavior not shown."
+SYSTEM = (
+    "You are a senior Ruby on Rails engineer reviewing a real application. "
+    "Be precise, identify only concrete issues supported by the supplied code, prefer idiomatic Rails fixes, "
+    "and do not invent behavior. Answer every requested item before optional explanation. Be concise."
+)
 
 TESTS = [
     {
@@ -41,12 +45,13 @@ class ApplicationController < ActionController::Base
   end
 end
 ```
-Review the concrete security/code problems. Include a corrected configure_permitted_parameters and call out dangerous role/default behavior.''',
+In at most 250 words: identify the concrete security/code problems, including the enum default; identify the malformed symbol; explain which Devise-managed fields must not be mass-assignable; and show a corrected `configure_permitted_parameters` that permits the five custom profile fields but not Devise internal state or roles.''',
         "checks": [
             ["superadmin default", ["superadmin", "default", "0"]],
-            ["encrypted_password unsafe", ["encrypted_password"]],
-            ["concatenated symbol typo", ["password_confirmationreset_password_token"]],
-            ["safe custom fields", ["first_name", "last_name"]],
+            ["encrypted password unsafe", ["encrypted_password"]],
+            ["internal tokens unsafe", ["reset_password_token", "confirmation_token", "unlock_token"]],
+            ["malformed symbol", ["password_confirmationreset_password_token"]],
+            ["safe custom fields", ["first_name", "last_name", "username", "phone", "cnic"]],
         ],
     },
     {
@@ -70,11 +75,12 @@ end
 class Users::SessionsController < Devise::SessionsController
 end
 ```
-What happens to an unauthenticated request to `/`? Discuss callback inheritance for the Devise sessions controller and any sign-in redirect-loop/blocking risk. If products#index should be public but the rest of the app authenticated, give the smallest idiomatic fix.''',
+In at most 180 words: explain exactly what happens for an unauthenticated GET `/`; explain whether Devise controllers inherit the ApplicationController callback and why `authenticate_user!` does not block Devise's own sign-in actions; then show the smallest idiomatic change if only `ProductsController#index` should be public. Do not claim a 500 error unless the shown code actually causes one.''',
         "checks": [
-            ["root protected", ["authenticate_user", "products#index"]],
-            ["devise callback inheritance", ["devise", "applicationcontroller"]],
-            ["skip callback", ["skip_before_action"]],
+            ["redirect to sign in", ["/users/sign_in"]],
+            ["devise inherits app controller", ["inherit", "applicationcontroller"]],
+            ["devise helper bypass", ["devise_controller?"]],
+            ["public index fix", ["skip_before_action", "authenticate_user!"]],
         ],
     },
     {
@@ -88,7 +94,7 @@ class User < ApplicationRecord
 end
 ```
 `role` and `status` are integer columns, both default 0.
-Explain the exact persisted integer mapping for every value, what a new row defaults to, why reordering these arrays later is dangerous, and show safer explicit hash enums.''',
+In at most 180 words: give the exact integer mapping for every role and status; state the effective defaults; explain precisely why reordering either array later corrupts semantic interpretation of existing rows; and show safer explicit-hash enums preserving the current mappings.''',
         "checks": [
             ["role mapping", ["superadmin", "0", "operator", "3"]],
             ["status mapping", ["inactive", "0", "archived", "3"]],
@@ -99,13 +105,13 @@ Explain the exact persisted integer mapping for every value, what a new row defa
     {
         "id": "crud_task",
         "title": "Idiomatic Rails CRUD implementation",
-        "prompt": '''Rails 6.1 app currently has root `products#index`, an empty Product model, a products table with a non-null string `name`, and:
+        "prompt": '''Rails 6.1 app already has a `products` table with non-null string `name`, root `products#index`, an empty Product model, and:
 ```ruby
 class ProductsController < ApplicationController
   def index; end
 end
 ```
-Implement compact idiomatic CRUD for Product. Show routes, model validation, and controller. Use strong params, avoid repeated Product.find code, and correctly render validation failures.''',
+Implement compact idiomatic CRUD for Product. Output only: (1) the routes addition while preserving the existing root, (2) Product model validation, and (3) ProductsController. Use strong params, one `before_action :set_product` for member actions, redirects on success, and `render ... status: :unprocessable_entity` on validation failure. Do not create a migration and do not add unrelated abstractions.''',
         "checks": [
             ["REST routes", ["resources :products"]],
             ["validation", ["validates :name", "presence: true"]],
@@ -120,21 +126,23 @@ def ask(prompt):
     payload = {
         "model": MODEL_SLUG,
         "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
-        "temperature": 0.15,
-        "max_tokens": 300,
+        "temperature": 0.1,
+        "max_tokens": 500,
         "stream": False,
     }
     req = urllib.request.Request(API, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST")
     started = time.time()
-    with urllib.request.urlopen(req, timeout=900) as resp:
+    with urllib.request.urlopen(req, timeout=1200) as resp:
         data = json.load(resp)
-    return data["choices"][0]["message"]["content"], round(time.time() - started, 2), data.get("timings", {})
+    msg = data["choices"][0]["message"]
+    content = msg.get("content") or msg.get("reasoning_content") or ""
+    return content, round(time.time() - started, 2), data.get("timings", {}), msg
 
 
 Path("benchmark-output").mkdir(exist_ok=True)
 results = []
 for test in TESTS:
-    text, seconds, timings = ask(test["prompt"])
+    text, seconds, timings, raw_message = ask(test["prompt"])
     lower = text.lower()
     checks = []
     for label, terms in test["checks"]:
@@ -144,10 +152,12 @@ for test in TESTS:
         "id": test["id"], "title": test["title"], "seconds": seconds,
         "score": sum(c["passed"] for c in checks), "max_score": len(checks),
         "checks": checks, "timings": timings, "response": text,
+        "raw_message": raw_message,
     })
     print(test["id"], results[-1]["score"], "/", len(checks), "seconds", seconds, flush=True)
 
 summary = {
+    "benchmark_version": 2,
     "model": MODEL_LABEL,
     "slug": MODEL_SLUG,
     "total": sum(r["score"] for r in results),
@@ -155,7 +165,7 @@ summary = {
     "results": results,
 }
 Path("benchmark-output/results.json").write_text(json.dumps(summary, indent=2))
-lines = [f"# {MODEL_LABEL} Rails benchmark", "", "Corpus: faheemKamboh/freshFruit (Rails 6.1)", f"Automated rubric: {summary['total']}/{summary['maximum']}", ""]
+lines = [f"# {MODEL_LABEL} Rails benchmark v2", "", "Corpus: faheemKamboh/freshFruit (Rails 6.1)", f"Automated rubric: {summary['total']}/{summary['maximum']}", ""]
 for r in results:
     lines += [f"## {r['title']}", f"Score: {r['score']}/{r['max_score']} — {r['seconds']}s", ""]
     for c in r["checks"]:
