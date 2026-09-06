@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: rails-active-agent-v1
+  group: rails-active-agent-v2
   cancel-in-progress: true
 
 jobs:
@@ -45,9 +45,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Prepare disposable freshFruit target
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git clone --depth=1 https://github.com/faheemKamboh/freshFruit.git /tmp/freshFruit
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" clone --depth=1 https://github.com/faheemKamboh/freshFruit.git /tmp/freshFruit
+          rm -f /tmp/freshFruit/.git/config
           cat >/tmp/freshFruit/Dockerfile.benchmark <<'DOCKER'
           FROM ruby:3.0.1-bullseye
           RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential libpq-dev postgresql-client nodejs git curl && rm -rf /var/lib/apt/lists/*
