@@ -9,6 +9,7 @@ on:
       - scripts/build_rails_agent_fixture_v2.sh
       - scripts/build_rails_agent_fixture_v2_compat.sh
       - scripts/grade_rails_agent_fixture_v2.sh
+      - scripts/grade_rails_agent_fixture_v2_compat.sh
   workflow_dispatch:
 
 permissions:
@@ -79,11 +80,13 @@ jobs:
           exit 1
 
       - name: Let model operate on repository
-        run: python3 rails_active_agent_v2.py
+        run: |
+          sed -i 's/"bash", "-lc"/"bash", "-c"/' rails_active_agent_v2.py
+          python3 rails_active_agent_v2.py
 
       - name: Grade executable outcomes
         if: always()
-        run: bash scripts/grade_rails_agent_fixture_v2.sh
+        run: bash scripts/grade_rails_agent_fixture_v2_compat.sh
 
       - name: Upload hard benchmark result
         if: always()
