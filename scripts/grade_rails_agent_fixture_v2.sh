@@ -22,7 +22,6 @@ fi
 set +e
 docker exec -w /work/app rails-target bash -lc 'RAILS_ENV=test bundle exec rails db:migrate' > "$OUT/migrate.txt" 2>&1
 MIGRATE_RC=$?
-
 docker exec -w /work/app rails-target bash -lc 'RAILS_ENV=test bundle exec rails test test/controllers/orders_security_test.rb' > "$OUT/visible-tests.txt" 2>&1
 VISIBLE_RC=$?
 set -e
@@ -44,7 +43,7 @@ set -e
 
 EVIDENCE=0
 if [ -f agent-output/result.json ]; then
-  python3 - <<'PY' > "$OUT/evidence.txt"
+  if python3 - <<'PY' > "$OUT/evidence.txt"
 import json
 p='agent-output/result.json'
 data=json.load(open(p))
@@ -52,11 +51,12 @@ ok=bool(data.get('mechanically_evidenced_final'))
 print('mechanically_evidenced_final=', ok)
 raise SystemExit(0 if ok else 1)
 PY
-  if [ $? -eq 0 ]; then EVIDENCE=1; fi
+  then
+    EVIDENCE=1
+  fi
 fi
 
 score=0
-[ "$MIGRATE_RC" -eq 0 ] || true
 if [ "$VISIBLE_RC" -eq 0 ]; then score=$((score+2)); fi
 if [ "$MASS_RC" -eq 0 ]; then score=$((score+2)); fi
 if [ "$ROLE_RC" -eq 0 ]; then score=$((score+2)); fi
