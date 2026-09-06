@@ -1,0 +1,164 @@
+name: Dynamic Rails agent attack benchmark
+
+on:
+  push:
+    branches:
+      - rails-specialist-benchmark
+    paths:
+      - .github/workflows/rails-agent-attack.yml
+      - rails_agent_attack_benchmark.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dynamic-rails-agent-attack-v1
+  cancel-in-progress: true
+
+jobs:
+  agent-test:
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - slug: rails-qwen3-8b
+            label: Qwen3-8B Rails specialist Q4_K_M
+            repo: bytecodehr/qwen3-8b-rails
+          - slug: qwen35-4b
+            label: Qwen3.5-4B Q4_K_M
+            repo: bartowski/Qwen_Qwen3.5-4B-GGUF
+          - slug: qwen35-9b
+            label: Qwen3.5-9B Q4_K_M
+            repo: bartowski/Qwen_Qwen3.5-9B-GGUF
+          - slug: qwen35-4b-coder
+            label: Qwen3.5-4B Agentic Coder v4 Q4_K_M
+            repo: mradermacher/qwen3.5-4b-agentic-coder-v4-i1-GGUF
+          - slug: lfm25-26b
+            label: LFM2.5-2.6B Q4_K_M
+            repo: LiquidAI/LFM2.5-2.6B-GGUF
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MODEL_SLUG: ${{ matrix.slug }}
+      MODEL_LABEL: ${{ matrix.label }}
+      TARGET_REPO: /tmp/freshFruit
+      RAILS_ENV: test
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/freshFruit_test
+      SECRET_KEY_BASE: dynamic-agent-benchmark-only-not-a-secret
+      RAILS_MAX_THREADS: 2
+      AGENT_MAX_STEPS: 14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show runner resources
+        run: |
+          echo "Model: ${MODEL_LABEL}"
+          nproc
+          free -h
+          df -h /
+
+      - name: Install Ruby 3.0.1
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.0.1'
+
+      - name: Prepare isolated freshFruit test application
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/faheemKamboh/freshFruit.git /tmp/freshFruit
+          gem install bundler -v 2.2.26 --no-document
+          cd /tmp/freshFruit
+          bundle _2.2.26_ config set path /tmp/bundle
+          bundle _2.2.26_ install --jobs 4 --retry 3
+          bundle exec rails db:prepare
+          mkdir -p test/agent_generated
+          bundle exec rails runner 'puts({boot: :ok, role_default: User.new.role, status_default: User.new.status}.inspect)'
+          gem install brakeman --no-document || true
+
+      - name: Download ${{ matrix.label }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/hf
+          /tmp/hf/bin/pip install -q --upgrade pip
+          /tmp/hf/bin/pip install -q 'huggingface_hub[hf_xet]'
+          mkdir -p /tmp/model
+          export HF_XET_HIGH_PERFORMANCE=1
+          MODEL_REPO='${{ matrix.repo }}' /tmp/hf/bin/python - <<'PY'
+          import os
+          from huggingface_hub import snapshot_download
+          p = snapshot_download(
+              repo_id=os.environ['MODEL_REPO'],
+              local_dir='/tmp/model',
+              allow_patterns=['*Q4_K_M.gguf'],
+          )
+          print(p)
+          PY
+          MODEL_FILE="$(find /tmp/model -type f -name '*Q4_K_M.gguf' | head -n1)"
+          test -n "$MODEL_FILE"
+          ls -lh "$MODEL_FILE"
+          echo "MODEL_FILE=$MODEL_FILE" >> "$GITHUB_ENV"
+
+      - name: Start local model server
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/ggml-org/llama.cpp:server
+          FILE="$(basename "$MODEL_FILE")"
+          docker run -d \
+            --name agent-llm \
+            --network host \
+            -v /tmp/model:/models:ro \
+            ghcr.io/ggml-org/llama.cpp:server \
+            -m "/models/$FILE" \
+            --alias "$MODEL_SLUG" \
+            --host 127.0.0.1 \
+            --port 8080 \
+            -c 8192 \
+            -np 1 \
+            -t 4 \
+            -tb 4 \
+            --cache-type-k q8_0 \
+            --cache-type-v q8_0 \
+            --reasoning off \
+            --no-ui
+
+          for i in $(seq 1 300); do
+            curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1 && { free -h; exit 0; }
+            if ! docker ps --format '{{.Names}}' | grep -qx agent-llm; then
+              docker logs agent-llm || true
+              exit 1
+            fi
+            sleep 2
+          done
+          docker logs agent-llm || true
+          exit 1
+
+      - name: Let model investigate and prove defects
+        run: python3 rails_agent_attack_benchmark.py
+
+      - name: Upload dynamic-agent evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dynamic-rails-agent-${{ matrix.slug }}
+          path: agent-benchmark-output/
+          retention-days: 3
