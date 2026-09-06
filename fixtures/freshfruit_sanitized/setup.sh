@@ -8,6 +8,10 @@ cat >"$TARGET/Gemfile" <<'RUBY'
 source "https://rubygems.org"
 ruby "3.0.6"
 gem "rails", "6.1.7.10"
+# Rails 6.1 assumes Logger is available through concurrent-ruby; newer releases
+# removed that implicit dependency. Pinning keeps this legacy fixture bootable
+# while preserving the Rails 6.1 behavior we actually want to benchmark.
+gem "concurrent-ruby", "1.3.4"
 gem "pg", "~> 1.5"
 gem "puma", "~> 5.6"
 gem "devise", "4.9.4"
@@ -16,6 +20,7 @@ RUBY
 cat >"$TARGET/config/boot.rb" <<'RUBY'
 ENV["BUNDLE_GEMFILE"] ||= File.expand_path("../Gemfile", __dir__)
 require "bundler/setup"
+require "logger"
 RUBY
 
 cat >"$TARGET/config/application.rb" <<'RUBY'
