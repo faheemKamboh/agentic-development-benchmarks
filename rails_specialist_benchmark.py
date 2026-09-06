@@ -1,9 +1,12 @@
 import json
+import os
 import time
 import urllib.request
 from pathlib import Path
 
 API = "http://127.0.0.1:8080/v1/chat/completions"
+MODEL_LABEL = os.environ.get("MODEL_LABEL", "local-model")
+MODEL_SLUG = os.environ.get("MODEL_SLUG", "local-model")
 SYSTEM = "You are a senior Ruby on Rails engineer reviewing a real application. Be precise, identify concrete bugs from the supplied code, prefer idiomatic Rails fixes, and do not invent behavior not shown."
 
 TESTS = [
@@ -115,7 +118,7 @@ Implement compact idiomatic CRUD for Product. Show routes, model validation, and
 
 def ask(prompt):
     payload = {
-        "model": "rails-specialist",
+        "model": MODEL_SLUG,
         "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
         "temperature": 0.15,
         "max_tokens": 300,
@@ -144,10 +147,15 @@ for test in TESTS:
     })
     print(test["id"], results[-1]["score"], "/", len(checks), "seconds", seconds, flush=True)
 
-Path("benchmark-output/results.json").write_text(json.dumps(results, indent=2))
-total = sum(r["score"] for r in results)
-maximum = sum(r["max_score"] for r in results)
-lines = ["# Qwen3 8B Rails benchmark", "", "Corpus: faheemKamboh/freshFruit (Rails 6.1)", f"Automated rubric: {total}/{maximum}", ""]
+summary = {
+    "model": MODEL_LABEL,
+    "slug": MODEL_SLUG,
+    "total": sum(r["score"] for r in results),
+    "maximum": sum(r["max_score"] for r in results),
+    "results": results,
+}
+Path("benchmark-output/results.json").write_text(json.dumps(summary, indent=2))
+lines = [f"# {MODEL_LABEL} Rails benchmark", "", "Corpus: faheemKamboh/freshFruit (Rails 6.1)", f"Automated rubric: {summary['total']}/{summary['maximum']}", ""]
 for r in results:
     lines += [f"## {r['title']}", f"Score: {r['score']}/{r['max_score']} — {r['seconds']}s", ""]
     for c in r["checks"]:
@@ -156,4 +164,4 @@ for r in results:
         lines += ["", "Timings: `" + json.dumps(r["timings"]) + "`"]
     lines += ["", "### Response", "", "```text", r["response"], "```", ""]
 Path("benchmark-output/report.md").write_text("\n".join(lines))
-print(f"TOTAL {total}/{maximum}", flush=True)
+print(f"TOTAL {summary['total']}/{summary['maximum']}", flush=True)
