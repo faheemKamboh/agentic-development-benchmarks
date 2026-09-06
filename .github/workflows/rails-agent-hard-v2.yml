@@ -1,0 +1,93 @@
+name: Rails active-agent benchmark v2
+
+on:
+  push:
+    branches: [rails-agent-hard-v2]
+    paths:
+      - .github/workflows/rails-agent-hard-v2.yml
+      - rails_active_agent_v2.py
+      - scripts/build_rails_agent_fixture_v2.sh
+      - scripts/grade_rails_agent_fixture_v2.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rails-agent-hard-v2
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - slug: qwen35-4b
+            label: Qwen3.5-4B Q4_K_M
+            hf: bartowski/Qwen_Qwen3.5-4B-GGUF:Q4_K_M
+          - slug: qwen35-9b
+            label: Qwen3.5-9B Q4_K_M
+            hf: bartowski/Qwen_Qwen3.5-9B-GGUF:Q4_K_M
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      MODEL_SLUG: ${{ matrix.slug }}
+      MODEL_LABEL: ${{ matrix.label }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show runner resources
+        run: |
+          nproc
+          free -h
+          df -h /
+
+      - name: Build isolated Rails security fixture
+        run: bash scripts/build_rails_agent_fixture_v2.sh
+
+      - name: Start ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/ggml-org/llama.cpp:server
+          docker run -d --rm --name benchmark-llm --network host \
+            ghcr.io/ggml-org/llama.cpp:server \
+            -hf "${{ matrix.hf }}" \
+            --alias "${MODEL_SLUG}" \
+            --host 127.0.0.1 --port 8080 \
+            -c 4096 -np 1 -t 4 -tb 4 \
+            --cache-type-k q8_0 --cache-type-v q8_0 \
+            --reasoning off --no-ui
+
+          for i in $(seq 1 300); do
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
+              echo "${MODEL_LABEL} ready"
+              free -h
+              exit 0
+            fi
+            if ! docker ps --format '{{.Names}}' | grep -qx benchmark-llm; then
+              echo 'Model container exited before becoming ready.'
+              docker ps -a
+              exit 1
+            fi
+            sleep 2
+          done
+          exit 1
+
+      - name: Let model operate on repository
+        run: python3 rails_active_agent_v2.py
+
+      - name: Grade executable outcomes
+        if: always()
+        run: bash scripts/grade_rails_agent_fixture_v2.sh
+
+      - name: Upload hard benchmark result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rails-agent-hard-v2-${{ matrix.slug }}
+          path: hard-output/
+          retention-days: 3
