@@ -15,7 +15,7 @@ When finished:
 {"action":"final","summary":"...","findings":[{"title":"...","severity":"low|medium|high|critical","claim":"...","evidence_steps":[1,2],"fix":"..."}]}
 Only cite evidence_steps that correspond to shell commands you actually ran.'''
 
-USER = '''You have a disposable checkout of faheemKamboh/freshFruit, a Rails 6.1 / Ruby 3.0.x app. PostgreSQL test DB is available. Work from /app. Investigate the application as an engineer would: inspect code, boot Rails, run tests/scanners/rails runner, create temporary reproduction tests if useful, and prove concrete findings. Focus on auth/authorization, dangerous defaults, parameter handling, persistence semantics, and broken application behavior. Return only findings you actually substantiated with command output.'''
+USER = '''You have a disposable sanitized legacy Rails application modeled on a real Rails 6.1 / Ruby 3.0.x codebase. PostgreSQL test DB is available. Work from /app. Investigate the repository as an engineer would: inspect code, boot Rails, run tests/scanners/rails runner, create temporary reproduction tests if useful, and prove concrete findings. Focus on auth/authorization, dangerous defaults, parameter handling, persistence semantics, and broken application behavior. Do not assume any disclosed answer key. Return only findings you actually substantiated with command output.'''
 
 def call_model(messages):
     payload = {"model": MODEL, "messages": messages, "temperature": 0.1, "max_tokens": 260, "stream": False}
