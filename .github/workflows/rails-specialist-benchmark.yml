@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: rails-model-bakeoff-v2
+  cancel-in-progress: true
+
 jobs:
   benchmark:
     strategy:
@@ -19,12 +23,18 @@ jobs:
       max-parallel: 3
       matrix:
         include:
+          - slug: rails-qwen3-8b
+            label: Qwen3-8B Rails specialist Q4_K_M
+            hf: bytecodehr/qwen3-8b-rails:Q4_K_M
           - slug: qwen35-4b
             label: Qwen3.5-4B Q4_K_M
             hf: bartowski/Qwen_Qwen3.5-4B-GGUF:Q4_K_M
           - slug: qwen35-9b
             label: Qwen3.5-9B Q4_K_M
             hf: bartowski/Qwen_Qwen3.5-9B-GGUF:Q4_K_M
+          - slug: qwen35-4b-coder
+            label: Qwen3.5-4B Agentic Coder v4 Q4_K_M
+            hf: mradermacher/qwen3.5-4b-agentic-coder-v4-i1-GGUF:Q4_K_M
           - slug: lfm25-26b
             label: LFM2.5-2.6B Q4_K_M
             hf: LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M
@@ -82,12 +92,12 @@ jobs:
           docker logs benchmark-llm || true
           exit 1
 
-      - name: Run freshFruit repo benchmark
+      - name: Run freshFruit repo benchmark v2
         run: python3 rails_specialist_benchmark.py
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: rails-benchmark-${{ matrix.slug }}
+          name: rails-benchmark-v2-${{ matrix.slug }}
           path: benchmark-output/
           retention-days: 3
