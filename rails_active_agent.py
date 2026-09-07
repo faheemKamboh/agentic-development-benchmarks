@@ -1,6 +1,8 @@
 import ast, json, os, re, subprocess, time, urllib.request
 from pathlib import Path
 
+from benchmark_store import BenchmarkStore
+
 API = 'http://127.0.0.1:8080/v1/chat/completions'
 MODEL = os.environ['MODEL_SLUG']
 LABEL = os.environ['MODEL_LABEL']
@@ -14,6 +16,13 @@ MODEL_SHELL_OUTPUT_CHARS = 5000
 OUT = Path('active-output')
 OUT.mkdir(exist_ok=True)
 EVENTS = OUT / 'events.jsonl'
+STORE = BenchmarkStore(
+    github_run_id=GITHUB_RUN_ID,
+    model_slug=MODEL,
+    model_label=LABEL,
+    benchmark_version='active-v5',
+    target='freshfruit-sanitized',
+)
 
 SYSTEM = '''You are an authorized senior Ruby on Rails security/debugging engineer operating inside a disposable isolated copy of a Rails app. Find and PROVE real bugs, security flaws, broken behavior, or dangerous defaults by inspecting and executing the app. Prefer executable evidence: Rails runner output, tests, request/response behavior, Brakeman, or minimal reproductions. You may edit files and add temporary tests. Do not access anything outside this container or any external network.
 
@@ -36,15 +45,18 @@ def persist(event):
     event.setdefault('ts', time.time())
     with EVENTS.open('a') as f:
         f.write(json.dumps(event, ensure_ascii=False) + '\n')
+    # Neon is best-effort durable storage. A DB outage must not invalidate a model run.
+    STORE.persist(event)
 
 def call_model(messages, max_tokens=TURN_TOKENS):
     payload = {"model": MODEL, "messages": messages, "temperature": 0.1, "max_tokens": max_tokens, "stream": False}
     req = urllib.request.Request(API, data=json.dumps(payload).encode(), headers={"Content-Type":"application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=900) as r:
         data = json.load(r)
-    msg = data['choices'][0]['message']
+    choice = data['choices'][0]
+    msg = choice['message']
     text = (msg.get('content') or msg.get('reasoning_content') or msg.get('reasoning') or '').strip()
-    return text, data.get('timings', {})
+    return text, data.get('timings', {}), choice.get('finish_reason'), data.get('usage', {})
 
 def parse_json(text):
     try:
@@ -101,11 +113,18 @@ final_obj=None
 shell_count=0
 shell_steps={}
 
-persist({'type':'session_start','model_label':LABEL})
+persist({'type':'session_start','model_label':LABEL,'store':STORE.diagnostic()})
 
 for turn in range(1, MAX_TURNS + 1):
-    raw, timings = call_model(messages)
-    model_rec = {"turn":turn,"type":"model","raw":raw,"timings":timings}
+    raw, timings, finish_reason, usage = call_model(messages)
+    model_rec = {
+        "turn":turn,
+        "type":"model",
+        "raw":raw,
+        "timings":timings,
+        "finish_reason":finish_reason,
+        "usage":usage,
+    }
     transcript.append(model_rec)
     persist(model_rec)
     obj = parse_json(raw)
@@ -161,8 +180,8 @@ for turn in range(1, MAX_TURNS + 1):
 
 if final_obj is None:
     final_prompt = '''Stop investigating. First, if you have any substantiated finding that you have NOT already persisted with action=finding, return ONE action=finding JSON now. Otherwise return only {"action":"final","summary":"concise summary"}. Do not use markdown.'''
-    raw, timings = call_model(messages + [{"role":"user","content":final_prompt}], max_tokens=FINAL_TOKENS)
-    persist({"type":"final_model","raw":raw,"timings":timings})
+    raw, timings, finish_reason, usage = call_model(messages + [{"role":"user","content":final_prompt}], max_tokens=FINAL_TOKENS)
+    persist({"type":"final_model","raw":raw,"timings":timings,"finish_reason":finish_reason,"usage":usage})
     obj = parse_json(raw)
     if obj and obj.get('action') == 'finding':
         finding = finding_with_evidence(obj, shell_steps)
@@ -190,10 +209,21 @@ for f in recorded_findings:
 verified=[f for f in deduped if f.get('mechanically_evidenced')]
 
 persist({'type':'session_end','verified_finding_count':len(verified),'finding_count':len(deduped),'summary':final_obj.get('summary','')})
-result={"github_run_id":GITHUB_RUN_ID,"model":LABEL,"slug":MODEL,"verified_finding_count":len(verified),"finding_count":len(deduped),"shell_step_count":shell_count,"final":final_obj,"findings":deduped,"transcript":transcript}
+store_report={
+    "github_run_id":GITHUB_RUN_ID,
+    "model":LABEL,
+    "slug":MODEL,
+    "verified_finding_count":len(verified),
+    "finding_count":len(deduped),
+    "shell_step_count":shell_count,
+    "final":final_obj,
+    "findings":deduped,
+}
+STORE.finish(store_report, status='completed')
+result={**store_report,"transcript":transcript,"neon_store":STORE.diagnostic()}
 (OUT/'result.json').write_text(json.dumps(result,indent=2))
 
-lines=[f'# Active Rails agent benchmark — {LABEL}','',f'Verified-evidence findings: **{len(verified)}**',f'Findings persisted: **{len(deduped)}**',f'Shell steps executed: **{shell_count}**','',final_obj.get('summary',''),'']
+lines=[f'# Active Rails agent benchmark — {LABEL}','',f'Verified-evidence findings: **{len(verified)}**',f'Findings persisted: **{len(deduped)}**',f'Shell steps executed: **{shell_count}**',f'Neon store enabled: **{STORE.diagnostic().get("enabled", False)}**','',final_obj.get('summary',''),'']
 for i,f in enumerate(deduped,1):
     lines += [f"## {i}. {f.get('title','Untitled')}",f"Severity: {f.get('severity','?')} — mechanically evidenced: **{f.get('mechanically_evidenced',False)}**",'',f.get('claim',''),'',f"Evidence steps: {f.get('evidence_steps',[])}",'',f"Fix: {f.get('fix','')}",'']
 lines += ['# Transcript','']
@@ -201,4 +231,4 @@ for x in transcript:
     if x.get('type')=='shell':
         lines += [f"## Shell step {x['step']}",f"`{x['command']}`",f"exit={x['exit_code']} time={x['seconds']}s",'','```text',x['output'],'```','']
 (OUT/'report.md').write_text('\n'.join(lines))
-print(json.dumps({"model":LABEL,"verified_finding_count":len(verified),"finding_count":len(deduped),"shell_step_count":shell_count,"findings":deduped},indent=2))
+print(json.dumps({"model":LABEL,"verified_finding_count":len(verified),"finding_count":len(deduped),"shell_step_count":shell_count,"neon_store":STORE.diagnostic(),"findings":deduped},indent=2))
