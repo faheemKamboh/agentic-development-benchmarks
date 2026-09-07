@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/rails-active-agent.yml
       - rails_active_agent.py
+      - benchmark_store.py
       - fixtures/freshfruit_sanitized/**
   workflow_dispatch:
 
@@ -13,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: rails-active-agent-v4
+  group: rails-active-agent-v5
   cancel-in-progress: true
 
 jobs:
@@ -41,6 +42,7 @@ jobs:
     env:
       MODEL_SLUG: ${{ matrix.slug }}
       MODEL_LABEL: ${{ matrix.label }}
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
 
     steps:
       - uses: actions/checkout@v4
@@ -51,8 +53,7 @@ jobs:
           bash fixtures/freshfruit_sanitized/setup.sh /tmp/freshFruit
 
           # A real Rails app has bin/rails. Without it, `bundle exec rails ...`
-          # can silently invoke the app generator and print help instead of
-          # executing application commands, which produced a false validation pass.
+          # can invoke the app generator instead of application commands.
           mkdir -p /tmp/freshFruit/bin
           cat >/tmp/freshFruit/bin/rails <<'RUBY'
           #!/usr/bin/env ruby
@@ -95,12 +96,12 @@ jobs:
             -e SECRET_KEY_BASE=benchmark-only-secret \
             freshfruit-target
 
-          echo 'Preparing database through the application Rails executable:'
-          docker exec freshfruit-app bash -lc 'bin/rails db:prepare'
+          echo 'Loading the fixture schema explicitly:'
+          docker exec freshfruit-app bash -lc 'bin/rails db:schema:load'
 
-          echo 'Proving the app actually booted and loaded its models:'
+          echo 'Proving the app actually booted, loaded its models, and has real tables:'
           docker exec freshfruit-app bash -lc \
-            'bin/rails runner "abort(\"wrong enum mapping\") unless User.roles == {\"superadmin\"=>0, \"admin\"=>1, \"manager\"=>2, \"operator\"=>3}; puts \"RAILS_BOOT_OK #{Rails.version} users=#{User.count}\""' \
+            'bin/rails runner "abort(\"wrong enum mapping\") unless User.roles == {\"superadmin\"=>0, \"admin\"=>1, \"manager\"=>2, \"operator\"=>3}; abort(\"users table missing\") unless ActiveRecord::Base.connection.data_source_exists?(\"users\"); puts \"RAILS_BOOT_OK #{Rails.version} users=#{User.count}\""' \
             | tee /tmp/rails-boot-check.txt
           grep -q 'RAILS_BOOT_OK 6.1.7.10' /tmp/rails-boot-check.txt
 
@@ -134,7 +135,14 @@ jobs:
           exit 1
 
       - name: Let model investigate and prove findings
-        run: python3 rails_active_agent.py
+        run: |
+          set -euo pipefail
+          if [ -n "${NEON_DATABASE_URL:-}" ]; then
+            python3 -m pip install --quiet 'psycopg[binary]>=3.2,<4'
+          else
+            echo 'NEON_DATABASE_URL is not configured; using artifact-only persistence.'
+          fi
+          python3 rails_active_agent.py
 
       - name: Capture target state
         if: always()
