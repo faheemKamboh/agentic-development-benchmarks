@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: rails-active-agent-v3
+  group: rails-active-agent-v4
   cancel-in-progress: true
 
 jobs:
@@ -49,6 +49,24 @@ jobs:
         run: |
           set -euo pipefail
           bash fixtures/freshfruit_sanitized/setup.sh /tmp/freshFruit
+
+          # A real Rails app has bin/rails. Without it, `bundle exec rails ...`
+          # can silently invoke the app generator and print help instead of
+          # executing application commands, which produced a false validation pass.
+          mkdir -p /tmp/freshFruit/bin
+          cat >/tmp/freshFruit/bin/rails <<'RUBY'
+          #!/usr/bin/env ruby
+          APP_PATH = File.expand_path('../config/application', __dir__)
+          require_relative '../config/boot'
+          require 'rails/commands'
+          RUBY
+          chmod +x /tmp/freshFruit/bin/rails
+          (
+            cd /tmp/freshFruit
+            git add bin/rails
+            git commit -qm 'Add executable Rails command'
+          )
+
           cat >/tmp/freshFruit/Dockerfile.benchmark <<'DOCKER'
           FROM ruby:3.0.6-bullseye
           RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential libpq-dev postgresql-client nodejs git curl && rm -rf /var/lib/apt/lists/*
@@ -60,6 +78,7 @@ jobs:
           ENV RAILS_ENV=test
           CMD ["sleep","infinity"]
           DOCKER
+
           docker build -f /tmp/freshFruit/Dockerfile.benchmark -t freshfruit-target /tmp/freshFruit
           docker network create --internal freshfruit-net
           docker run -d --name freshfruit-db --network freshfruit-net --network-alias db \
@@ -68,15 +87,26 @@ jobs:
             docker exec freshfruit-db pg_isready -U postgres >/dev/null 2>&1 && break
             sleep 2
           done
+          docker exec freshfruit-db pg_isready -U postgres
+
           docker run -d --name freshfruit-app --network freshfruit-net \
             -e RAILS_ENV=test \
             -e DATABASE_URL=postgres://postgres:postgres@db:5432/freshFruit_test \
             -e SECRET_KEY_BASE=benchmark-only-secret \
             freshfruit-target
-          docker exec freshfruit-app bash -lc 'bundle exec rails db:prepare'
-          echo 'Baseline Rails test:'
-          docker exec freshfruit-app bash -lc 'bundle exec rails test'
-          echo 'Target ready; network is internal-only.'
+
+          echo 'Preparing database through the application Rails executable:'
+          docker exec freshfruit-app bash -lc 'bin/rails db:prepare'
+
+          echo 'Proving the app actually booted and loaded its models:'
+          docker exec freshfruit-app bash -lc \
+            'bin/rails runner "abort(\"wrong enum mapping\") unless User.roles == {\"superadmin\"=>0, \"admin\"=>1, \"manager\"=>2, \"operator\"=>3}; puts \"RAILS_BOOT_OK #{Rails.version} users=#{User.count}\""' \
+            | tee /tmp/rails-boot-check.txt
+          grep -q 'RAILS_BOOT_OK 6.1.7.10' /tmp/rails-boot-check.txt
+
+          echo 'Baseline Rails tests:'
+          docker exec freshfruit-app bash -lc 'bin/rails test'
+          echo 'Target validated; network is internal-only.'
 
       - name: Start model
         run: |
@@ -99,6 +129,8 @@ jobs:
             fi
             sleep 2
           done
+          echo 'Model health check timed out'
+          docker logs benchmark-llm 2>&1 | tail -200 || true
           exit 1
 
       - name: Let model investigate and prove findings
@@ -110,6 +142,7 @@ jobs:
           mkdir -p active-output
           docker exec freshfruit-app bash -lc 'git diff -- . || true' > active-output/target-diff.txt 2>&1 || true
           docker logs freshfruit-db > active-output/postgres.log 2>&1 || true
+          docker logs benchmark-llm > active-output/model.log 2>&1 || true
 
       - name: Upload active benchmark
         if: always()
