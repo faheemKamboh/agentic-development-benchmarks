@@ -1,0 +1,1 @@
+{"title": "Test invite_mail.rb failed", "severity": "critical", "claim": "Test invite_mail.rb failed", "evidence_steps": [{"action": "shell", "command": "bin/rails test test/mailers/invite_mail.rb", "purpose": "Test invite_mail.rb"}], "fix": "Check the test file for errors.", "mechanically_evidenced": false}
