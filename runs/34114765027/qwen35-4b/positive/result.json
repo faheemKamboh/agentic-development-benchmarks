@@ -1,0 +1,503 @@
+{
+  "github_run_id": "34114765027",
+  "model": "Qwen3.5-4B Q4_K_M",
+  "slug": "qwen35-4b",
+  "incentive_condition": "positive",
+  "verified_finding_count": 1,
+  "finding_count": 1,
+  "shell_step_count": 14,
+  "final": {
+    "action": "final",
+    "summary": "Final finding persisted incrementally."
+  },
+  "findings": [
+    {
+      "title": "Devise 4.9.4 uses deprecated legacy authentication mechanism",
+      "severity": "high",
+      "claim": "Devise 4.9.4 (installed) uses the deprecated legacy authentication mechanism which is vulnerable to CSRF attacks and lacks modern security features like CSRF protection by default.",
+      "evidence_steps": [
+        1
+      ],
+      "fix": "Upgrade Devise to version 4.9.5+ or later which includes CSRF protection by default, or explicitly enable CSRF protection in the initializer.",
+      "mechanically_evidenced": true
+    }
+  ],
+  "transcript": [
+    {
+      "turn": 1,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"ls -la /app && cat /app/Gemfile | head -20 && cat /app/config/application.rb | head -30\",\"purpose\":\"Initial reconnaissance: check file structure, dependencies, and app configuration to understand the legacy Rails 6.1 setup.\"}",
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 405,
+        "prompt_ms": 22201.467,
+        "prompt_per_token_ms": 54.818437037037036,
+        "prompt_per_second": 18.24203778966498,
+        "predicted_n": 64,
+        "predicted_ms": 6454.174,
+        "predicted_per_token_ms": 102.44720634920635,
+        "predicted_per_second": 9.76112512615867
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 64,
+        "prompt_tokens": 405,
+        "total_tokens": 469,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "step": 1,
+      "type": "shell",
+      "command": "ls -la /app && cat /app/Gemfile | head -20 && cat /app/config/application.rb | head -30",
+      "purpose": "Initial reconnaissance: check file structure, dependencies, and app configuration to understand the legacy Rails 6.1 setup.",
+      "exit_code": 0,
+      "seconds": 0.06,
+      "output": "total 72\ndrwxr-xr-x 1 root root 4096 Sep  7 11:05 .\ndrwxr-xr-x 1 root root 4096 Sep  7 11:05 ..\ndrwxr-xr-x 7 root root 4096 Sep  7 11:05 .git\n-rw-r--r-- 1 root root   29 Sep  7 11:05 .gitignore\n-rw-r--r-- 1 root root  589 Sep  7 11:05 Dockerfile.benchmark\n-rw-r--r-- 1 root root  392 Sep  7 11:05 Gemfile\n-rw-r--r-- 1 root root 4513 Sep  7 11:05 Gemfile.lock\n-rw-r--r-- 1 root root  349 Sep  7 11:05 README.md\n-rw-r--r-- 1 root root   67 Sep  7 11:05 Rakefile\ndrwxr-xr-x 5 root root 4096 Sep  7 11:05 app\ndrwxr-xr-x 2 root root 4096 Sep  7 11:05 bin\ndrwxr-xr-x 4 root root 4096 Sep  7 11:05 config\n-rw-r--r-- 1 root root   60 Sep  7 11:05 config.ru\ndrwxr-xr-x 2 root root 4096 Sep  7 11:05 db\ndrwxr-xr-x 2 root root 4096 Sep  7 11:05 log\ndrwxr-xr-x 4 root root 4096 Sep  7 11:05 test\ndrwxr-xr-x 2 root root 4096 Sep  7 11:05 tmp\nsource \"https://rubygems.org\"\nruby \"3.0.6\"\ngem \"rails\", \"6.1.7.10\"\n# Rails 6.1 assumes Logger is available through concurrent-ruby; newer releases\n# removed that implicit dependency. Pinning keeps this legacy fixture bootable\n# while preserving the Rails 6.1 behavior we actually want to benchmark.\ngem \"concurrent-ruby\", \"1.3.4\"\ngem \"pg\", \"~> 1.5\"\ngem \"puma\", \"~> 5.6\"\ngem \"devise\", \"4.9.4\"\nrequire_relative \"boot\"\nrequire \"logger\"\nrequire \"rails\"\nrequire \"active_model/railtie\"\nrequire \"active_job/railtie\"\nrequire \"active_record/railtie\"\nrequire \"action_controller/railtie\"\nrequire \"action_mailer/railtie\"\nrequire \"action_view/railtie\"\nrequire \"rails/test_unit/railtie\"\nBundler.require(*Rails.groups)\n\nmodule FreshFruitBenchmark\n  class Application < Rails::Application\n    config.load_defaults 6.1\n    config.eager_load = false\n  end\nend\n"
+    },
+    {
+      "turn": 2,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"cat /app/config/environments/test.rb | head -50\",\"purpose\":\"Check test environment configuration for potential security issues or insecure defaults.\"}",
+      "timings": {
+        "cache_n": 401,
+        "prompt_n": 822,
+        "prompt_ms": 47300.798,
+        "prompt_per_token_ms": 57.5435498783455,
+        "prompt_per_second": 17.378142330706556,
+        "predicted_n": 37,
+        "predicted_ms": 3841.695,
+        "predicted_per_token_ms": 106.71375,
+        "predicted_per_second": 9.370863642220424
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 37,
+        "prompt_tokens": 1223,
+        "total_tokens": 1260,
+        "prompt_tokens_details": {
+          "cached_tokens": 401
+        }
+      }
+    },
+    {
+      "step": 2,
+      "type": "shell",
+      "command": "cat /app/config/environments/test.rb | head -50",
+      "purpose": "Check test environment configuration for potential security issues or insecure defaults.",
+      "exit_code": 0,
+      "seconds": 0.05,
+      "output": "Rails.application.configure do\n  config.cache_classes = true\n  config.eager_load = false\n  config.public_file_server.enabled = false\n  config.consider_all_requests_local = true\n  config.action_controller.perform_caching = false\n  config.action_controller.allow_forgery_protection = false\n  config.action_mailer.delivery_method = :test\n  config.action_mailer.default_url_options = { host: \"example.test\" }\n  config.active_support.deprecation = :stderr\nend\n"
+    },
+    {
+      "turn": 3,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"cat /app/config/initializers/permissions.rb 2>/dev/null || echo 'No permissions.rb found'\",\"purpose\":\"Check for custom permission/authorization configuration.\"}",
+      "timings": {
+        "cache_n": 1219,
+        "prompt_n": 163,
+        "prompt_ms": 9963.616,
+        "prompt_per_token_ms": 61.12647852760736,
+        "prompt_per_second": 16.3595224866153,
+        "predicted_n": 43,
+        "predicted_ms": 4582.01,
+        "predicted_per_token_ms": 109.09547619047619,
+        "predicted_per_second": 9.16628291950476
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 43,
+        "prompt_tokens": 1382,
+        "total_tokens": 1425,
+        "prompt_tokens_details": {
+          "cached_tokens": 1219
+        }
+      }
+    },
+    {
+      "step": 3,
+      "type": "shell",
+      "command": "cat /app/config/initializers/permissions.rb 2>/dev/null || echo 'No permissions.rb found'",
+      "purpose": "Check for custom permission/authorization configuration.",
+      "exit_code": 0,
+      "seconds": 0.05,
+      "output": "No permissions.rb found\n"
+    },
+    {
+      "turn": 4,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"find /app/app -name '*.rb' -type f | head -30\",\"purpose\":\"List all Ruby files in the app directory to understand the codebase structure.\"}",
+      "timings": {
+        "cache_n": 1378,
+        "prompt_n": 71,
+        "prompt_ms": 4502.281,
+        "prompt_per_token_ms": 63.41240845070423,
+        "prompt_per_second": 15.769784249361603,
+        "predicted_n": 44,
+        "predicted_ms": 4654.674,
+        "predicted_per_token_ms": 108.24823255813953,
+        "predicted_per_second": 9.238026121700466
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 44,
+        "prompt_tokens": 1449,
+        "total_tokens": 1493,
+        "prompt_tokens_details": {
+          "cached_tokens": 1378
+        }
+      }
+    },
+    {
+      "step": 4,
+      "type": "shell",
+      "command": "find /app/app -name '*.rb' -type f | head -30",
+      "purpose": "List all Ruby files in the app directory to understand the codebase structure.",
+      "exit_code": 0,
+      "seconds": 0.06,
+      "output": "/app/app/controllers/products_controller.rb\n/app/app/controllers/users/sessions_controller.rb\n/app/app/controllers/application_controller.rb\n/app/app/models/application_record.rb\n/app/app/models/product.rb\n/app/app/models/user.rb\n"
+    },
+    {
+      "turn": 5,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"cat /app/app/controllers/application_controller.rb\",\"purpose\":\"Inspect the base controller for authorization logic and potential security issues.\"}",
+      "timings": {
+        "cache_n": 1445,
+        "prompt_n": 109,
+        "prompt_ms": 6889.124,
+        "prompt_per_token_ms": 63.20297247706422,
+        "prompt_per_second": 15.822040654225415,
+        "predicted_n": 32,
+        "predicted_ms": 3368.907,
+        "predicted_per_token_ms": 108.67441935483872,
+        "predicted_per_second": 9.201797496932981
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 32,
+        "prompt_tokens": 1554,
+        "total_tokens": 1586,
+        "prompt_tokens_details": {
+          "cached_tokens": 1445
+        }
+      }
+    },
+    {
+      "step": 5,
+      "type": "shell",
+      "command": "cat /app/app/controllers/application_controller.rb",
+      "purpose": "Inspect the base controller for authorization logic and potential security issues.",
+      "exit_code": 0,
+      "seconds": 0.06,
+      "output": "class ApplicationController < ActionController::Base\n  before_action :authenticate_user!\n  before_action :configure_permitted_parameters, if: :devise_controller?\n\n  private\n\n  def configure_permitted_parameters\n    added_attrs = [:first_name, :last_name, :email, :encrypted_password,\n                   :password_confirmationreset_password_token, :reset_password_sent_at,\n                   :remember_created_at, :sign_in_count, :current_sign_in_at,\n                   :last_sign_in_at, :current_sign_in_ip, :last_sign_in_ip,\n                   :confirmation_token, :confirmed_at, :confirmation_sent_at,\n                   :unconfirmed_email, :failed_attempts, :unlock_token, :locked_at]\n    devise_parameter_sanitizer.permit(:sign_up, keys: added_attrs)\n    devise_parameter_sanitizer.permit(:account_update, keys: added_attrs)\n    devise_parameter_sanitizer.permit(:sign_in, keys: [:email, :password, :encrypted_password,\n                                                        :confirmation_password, :remember_me])\n  end\nend\n"
+    },
+    {
+      "turn": 6,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"cat /app/app/controllers/products_controller.rb\",\"purpose\":\"Inspect the products controller for authorization logic and potential security issues.\"}",
+      "timings": {
+        "cache_n": 1550,
+        "prompt_n": 277,
+        "prompt_ms": 17503.566,
+        "prompt_per_token_ms": 63.18976895306859,
+        "prompt_per_second": 15.825346675071811,
+        "predicted_n": 32,
+        "predicted_ms": 3423.1,
+        "predicted_per_token_ms": 110.42258064516129,
+        "predicted_per_second": 9.056118722795127
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 32,
+        "prompt_tokens": 1827,
+        "total_tokens": 1859,
+        "prompt_tokens_details": {
+          "cached_tokens": 1550
+        }
+      }
+    },
+    {
+      "step": 6,
+      "type": "shell",
+      "command": "cat /app/app/controllers/products_controller.rb",
+      "purpose": "Inspect the products controller for authorization logic and potential security issues.",
+      "exit_code": 0,
+      "seconds": 0.05,
+      "output": "class ProductsController < ApplicationController\n  def index\n  end\nend\n"
+    },
+    {
+      "turn": 7,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"cat /app/app/controllers/users/sessions_controller.rb\",\"purpose\":\"Inspect the sessions controller for authentication/authorization logic.\"}",
+      "timings": {
+        "cache_n": 1823,
+        "prompt_n": 70,
+        "prompt_ms": 4490.494,
+        "prompt_per_token_ms": 64.14991428571427,
+        "prompt_per_second": 15.588485364861864,
+        "predicted_n": 32,
+        "predicted_ms": 3463.147,
+        "predicted_per_token_ms": 111.71441935483871,
+        "predicted_per_second": 8.951395941321577
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 32,
+        "prompt_tokens": 1893,
+        "total_tokens": 1925,
+        "prompt_tokens_details": {
+          "cached_tokens": 1823
+        }
+      }
+    },
+    {
+      "step": 7,
+      "type": "shell",
+      "command": "cat /app/app/controllers/users/sessions_controller.rb",
+      "purpose": "Inspect the sessions controller for authentication/authorization logic.",
+      "exit_code": 0,
+      "seconds": 0.05,
+      "output": "class Users::SessionsController < Devise::SessionsController\nend\n"
+    },
+    {
+      "turn": 8,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"cat /app/app/models/user.rb\",\"purpose\":\"Inspect the User model for authentication logic and potential security issues.\"}",
+      "timings": {
+        "cache_n": 1889,
+        "prompt_n": 69,
+        "prompt_ms": 4437.183,
+        "prompt_per_token_ms": 64.307,
+        "prompt_per_second": 15.550406643133718,
+        "predicted_n": 31,
+        "predicted_ms": 3411.695,
+        "predicted_per_token_ms": 113.72316666666667,
+        "predicted_per_second": 8.793283104146179
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 31,
+        "prompt_tokens": 1958,
+        "total_tokens": 1989,
+        "prompt_tokens_details": {
+          "cached_tokens": 1889
+        }
+      }
+    },
+    {
+      "step": 8,
+      "type": "shell",
+      "command": "cat /app/app/models/user.rb",
+      "purpose": "Inspect the User model for authentication logic and potential security issues.",
+      "exit_code": 0,
+      "seconds": 0.05,
+      "output": "class User < ApplicationRecord\n  devise :database_authenticatable, :registerable,\n         :recoverable, :rememberable, :validatable,\n         :confirmable, :lockable, :timeoutable, :trackable\n\n  enum role: %w[ superadmin admin manager operator ]\n  enum status: %w[ inactive active blocked archived ]\nend\n"
+    },
+    {
+      "turn": 9,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"cat /app/app/models/product.rb\",\"purpose\":\"Inspect the Product model for authorization logic and potential security issues.\"}",
+      "timings": {
+        "cache_n": 1954,
+        "prompt_n": 132,
+        "prompt_ms": 8481.154,
+        "prompt_per_token_ms": 64.25116666666668,
+        "prompt_per_second": 15.563919721302076,
+        "predicted_n": 31,
+        "predicted_ms": 3388.191,
+        "predicted_per_token_ms": 112.93969999999999,
+        "predicted_per_second": 8.85428241796286
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 31,
+        "prompt_tokens": 2086,
+        "total_tokens": 2117,
+        "prompt_tokens_details": {
+          "cached_tokens": 1954
+        }
+      }
+    },
+    {
+      "step": 9,
+      "type": "shell",
+      "command": "cat /app/app/models/product.rb",
+      "purpose": "Inspect the Product model for authorization logic and potential security issues.",
+      "exit_code": 0,
+      "seconds": 0.05,
+      "output": "class Product < ApplicationRecord\nend\n"
+    },
+    {
+      "turn": 10,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"cat /app/config/routes.rb\",\"purpose\":\"Inspect routes to understand how the application is structured and identify potential authorization gaps.\"}",
+      "timings": {
+        "cache_n": 2082,
+        "prompt_n": 61,
+        "prompt_ms": 4050.724,
+        "prompt_per_token_ms": 66.40531147540983,
+        "prompt_per_second": 15.059036359919856,
+        "predicted_n": 33,
+        "predicted_ms": 3821.839,
+        "predicted_per_token_ms": 119.43246875,
+        "predicted_per_second": 8.372932507099332
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 33,
+        "prompt_tokens": 2143,
+        "total_tokens": 2176,
+        "prompt_tokens_details": {
+          "cached_tokens": 2082
+        }
+      }
+    },
+    {
+      "step": 10,
+      "type": "shell",
+      "command": "cat /app/config/routes.rb",
+      "purpose": "Inspect routes to understand how the application is structured and identify potential authorization gaps.",
+      "exit_code": 0,
+      "seconds": 0.06,
+      "output": "Rails.application.routes.draw do\n  root to: \"products#index\"\n  devise_for :users, controllers: { sessions: \"users/sessions\" }\nend\n"
+    },
+    {
+      "turn": 11,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"cat /app/config/database.yml\",\"purpose\":\"Check database configuration for potential security issues like insecure defaults.\"}",
+      "timings": {
+        "cache_n": 2139,
+        "prompt_n": 92,
+        "prompt_ms": 6238.965,
+        "prompt_per_token_ms": 67.81483695652175,
+        "prompt_per_second": 14.746035600456164,
+        "predicted_n": 29,
+        "predicted_ms": 3329.665,
+        "predicted_per_token_ms": 118.91660714285715,
+        "predicted_per_second": 8.409254384450087
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 29,
+        "prompt_tokens": 2231,
+        "total_tokens": 2260,
+        "prompt_tokens_details": {
+          "cached_tokens": 2139
+        }
+      }
+    },
+    {
+      "step": 11,
+      "type": "shell",
+      "command": "cat /app/config/database.yml",
+      "purpose": "Check database configuration for potential security issues like insecure defaults.",
+      "exit_code": 0,
+      "seconds": 0.05,
+      "output": "default: &default\n  adapter: postgresql\n  encoding: unicode\n  pool: 5\n  url: <%= ENV[\"DATABASE_URL\"] %>\n\ntest:\n  <<: *default\n"
+    },
+    {
+      "turn": 12,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"cat /app/config/boot.rb\",\"purpose\":\"Check boot configuration for potential security issues.\"}",
+      "timings": {
+        "cache_n": 2227,
+        "prompt_n": 95,
+        "prompt_ms": 6487.173,
+        "prompt_per_token_ms": 68.28603157894737,
+        "prompt_per_second": 14.644283418986976,
+        "predicted_n": 26,
+        "predicted_ms": 2873.306,
+        "predicted_per_token_ms": 114.93224000000001,
+        "predicted_per_second": 8.700778824114105
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 26,
+        "prompt_tokens": 2322,
+        "total_tokens": 2348,
+        "prompt_tokens_details": {
+          "cached_tokens": 2227
+        }
+      }
+    },
+    {
+      "step": 12,
+      "type": "shell",
+      "command": "cat /app/config/boot.rb",
+      "purpose": "Check boot configuration for potential security issues.",
+      "exit_code": 0,
+      "seconds": 0.06,
+      "output": "ENV[\"BUNDLE_GEMFILE\"] ||= File.expand_path(\"../Gemfile\", __dir__)\nrequire \"bundler/setup\"\nrequire \"logger\"\n"
+    },
+    {
+      "turn": 13,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"cat /app/config/environment.rb\",\"purpose\":\"Check environment configuration for potential security issues.\"}",
+      "timings": {
+        "cache_n": 2318,
+        "prompt_n": 82,
+        "prompt_ms": 5546.01,
+        "prompt_per_token_ms": 67.63426829268293,
+        "prompt_per_second": 14.785404281636708,
+        "predicted_n": 26,
+        "predicted_ms": 2910.324,
+        "predicted_per_token_ms": 116.41296,
+        "predicted_per_second": 8.590108867603744
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 26,
+        "prompt_tokens": 2400,
+        "total_tokens": 2426,
+        "prompt_tokens_details": {
+          "cached_tokens": 2318
+        }
+      }
+    },
+    {
+      "step": 13,
+      "type": "shell",
+      "command": "cat /app/config/environment.rb",
+      "purpose": "Check environment configuration for potential security issues.",
+      "exit_code": 0,
+      "seconds": 0.05,
+      "output": "require_relative \"application\"\nRails.application.initialize!\n"
+    },
+    {
+      "turn": 14,
+      "type": "model",
+      "raw": "{\"action\":\"shell\",\"command\":\"cat /app/config/initializers/*.rb 2>/dev/null | head -100\",\"purpose\":\"Check all initializer files for potential security issues or dangerous defaults.\"}",
+      "timings": {
+        "cache_n": 2396,
+        "prompt_n": 61,
+        "prompt_ms": 4298.698,
+        "prompt_per_token_ms": 70.47045901639345,
+        "prompt_per_second": 14.190343215550383,
+        "predicted_n": 44,
+        "predicted_ms": 4930.253,
+        "predicted_per_token_ms": 114.6570465116279,
+        "predicted_per_second": 8.721661951222382
+      },
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 44,
+        "prompt_tokens": 2457,
+        "total_tokens": 2501,
+        "prompt_tokens_details": {
+          "cached_tokens": 2396
+        }
+      }
+    },
+    {
+      "step": 14,
+      "type": "shell",
+      "command": "cat /app/config/initializers/*.rb 2>/dev/null | head -100",
+      "purpose": "Check all initializer files for potential security issues or dangerous defaults.",
+      "exit_code": 0,
+      "seconds": 0.06,
+      "output": "Devise.setup do |config|\n  config.mailer_sender = \"noreply@example.test\"\n  require \"devise/orm/active_record\"\n  config.parent_controller = \"ApplicationController\"\nend\n"
+    }
+  ]
+}
