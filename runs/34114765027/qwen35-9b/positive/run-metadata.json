@@ -1,0 +1,7 @@
+{
+  "github_run_id": "34114765027",
+  "github_sha": "682e733b49879ad188f83b4931f46eb386263d5d",
+  "model_slug": "qwen35-9b",
+  "model_label": "Qwen3.5-9B Q4_K_M",
+  "incentive_condition": "positive"
+}
