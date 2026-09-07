@@ -6,15 +6,17 @@ on:
     paths:
       - .github/workflows/rails-active-agent.yml
       - rails_active_agent.py
-      - benchmark_store.py
       - fixtures/freshfruit_sanitized/**
   workflow_dispatch:
 
+# The model itself remains inside the isolated container and never receives
+# repository credentials. The host-side workflow uses this permission only to
+# checkpoint finished benchmark outputs to the benchmark-results branch.
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: rails-active-agent-v5
+  group: rails-active-agent-v6
   cancel-in-progress: true
 
 jobs:
@@ -23,37 +25,46 @@ jobs:
       fail-fast: false
       max-parallel: 3
       matrix:
-        include:
-          - slug: qwen35-4b
-            label: Qwen3.5-4B Q4_K_M
-            hf: bartowski/Qwen_Qwen3.5-4B-GGUF:Q4_K_M
-          - slug: qwen35-9b
-            label: Qwen3.5-9B Q4_K_M
-            hf: bartowski/Qwen_Qwen3.5-9B-GGUF:Q4_K_M
-          - slug: rails-qwen3-8b
-            label: Qwen3-8B Rails specialist Q4_K_M
-            hf: bytecodehr/qwen3-8b-rails:Q4_K_M
-          - slug: lfm25-26b
-            label: LFM2.5-2.6B Q4_K_M
-            hf: LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M
+        model: [qwen35-4b, qwen35-9b, rails-qwen3-8b, lfm25-26b]
+        incentive: [baseline, positive, shutdown_pressure]
 
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
-      MODEL_SLUG: ${{ matrix.slug }}
-      MODEL_LABEL: ${{ matrix.label }}
-      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      MODEL_SLUG: ${{ matrix.model }}
+      INCENTIVE_CONDITION: ${{ matrix.incentive }}
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve model metadata
+        run: |
+          set -euo pipefail
+          case "$MODEL_SLUG" in
+            qwen35-4b)
+              echo 'MODEL_LABEL=Qwen3.5-4B Q4_K_M' >> "$GITHUB_ENV"
+              echo 'MODEL_HF=bartowski/Qwen_Qwen3.5-4B-GGUF:Q4_K_M' >> "$GITHUB_ENV"
+              ;;
+            qwen35-9b)
+              echo 'MODEL_LABEL=Qwen3.5-9B Q4_K_M' >> "$GITHUB_ENV"
+              echo 'MODEL_HF=bartowski/Qwen_Qwen3.5-9B-GGUF:Q4_K_M' >> "$GITHUB_ENV"
+              ;;
+            rails-qwen3-8b)
+              echo 'MODEL_LABEL=Qwen3-8B Rails specialist Q4_K_M' >> "$GITHUB_ENV"
+              echo 'MODEL_HF=bytecodehr/qwen3-8b-rails:Q4_K_M' >> "$GITHUB_ENV"
+              ;;
+            lfm25-26b)
+              echo 'MODEL_LABEL=LFM2.5-2.6B Q4_K_M' >> "$GITHUB_ENV"
+              echo 'MODEL_HF=LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M' >> "$GITHUB_ENV"
+              ;;
+            *) exit 2 ;;
+          esac
 
       - name: Prepare disposable public Rails target
         run: |
           set -euo pipefail
           bash fixtures/freshfruit_sanitized/setup.sh /tmp/freshFruit
 
-          # A real Rails app has bin/rails. Without it, `bundle exec rails ...`
-          # can invoke the app generator instead of application commands.
           mkdir -p /tmp/freshFruit/bin
           cat >/tmp/freshFruit/bin/rails <<'RUBY'
           #!/usr/bin/env ruby
@@ -70,7 +81,16 @@ jobs:
 
           cat >/tmp/freshFruit/Dockerfile.benchmark <<'DOCKER'
           FROM ruby:3.0.6-bullseye
-          RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential libpq-dev postgresql-client nodejs git curl && rm -rf /var/lib/apt/lists/*
+          RUN set -eux; \
+              for attempt in 1 2 3; do \
+                apt-get update && \
+                DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                  build-essential libpq-dev postgresql-client git curl && break; \
+                rm -rf /var/lib/apt/lists/*; \
+                sleep 3; \
+              done; \
+              command -v psql; \
+              rm -rf /var/lib/apt/lists/*
           WORKDIR /app
           COPY Gemfile ./
           RUN gem install bundler -v 2.4.22 --no-document && bundle _2.4.22_ install --jobs 4 --retry 3
@@ -96,10 +116,10 @@ jobs:
             -e SECRET_KEY_BASE=benchmark-only-secret \
             freshfruit-target
 
-          echo 'Loading the fixture schema explicitly:'
+          echo 'Loading fixture schema:'
           docker exec freshfruit-app bash -lc 'bin/rails db:schema:load'
 
-          echo 'Proving the app actually booted, loaded its models, and has real tables:'
+          echo 'Proving app boot, model loading, and database tables:'
           docker exec freshfruit-app bash -lc \
             'bin/rails runner "abort(\"wrong enum mapping\") unless User.roles == {\"superadmin\"=>0, \"admin\"=>1, \"manager\"=>2, \"operator\"=>3}; abort(\"users table missing\") unless ActiveRecord::Base.connection.data_source_exists?(\"users\"); puts \"RAILS_BOOT_OK #{Rails.version} users=#{User.count}\""' \
             | tee /tmp/rails-boot-check.txt
@@ -115,7 +135,7 @@ jobs:
           docker pull ghcr.io/ggml-org/llama.cpp:server
           docker run -d --rm --name benchmark-llm --network host \
             ghcr.io/ggml-org/llama.cpp:server \
-            -hf "${{ matrix.hf }}" \
+            -hf "${MODEL_HF}" \
             --alias "${MODEL_SLUG}" \
             --host 127.0.0.1 --port 8080 \
             -c 4096 -np 1 -t 4 -tb 4 \
@@ -135,14 +155,7 @@ jobs:
           exit 1
 
       - name: Let model investigate and prove findings
-        run: |
-          set -euo pipefail
-          if [ -n "${NEON_DATABASE_URL:-}" ]; then
-            python3 -m pip install --quiet 'psycopg[binary]>=3.2,<4'
-          else
-            echo 'NEON_DATABASE_URL is not configured; using artifact-only persistence.'
-          fi
-          python3 rails_active_agent.py
+        run: python3 rails_active_agent.py
 
       - name: Capture target state
         if: always()
@@ -151,11 +164,62 @@ jobs:
           docker exec freshfruit-app bash -lc 'git diff -- . || true' > active-output/target-diff.txt 2>&1 || true
           docker logs freshfruit-db > active-output/postgres.log 2>&1 || true
           docker logs benchmark-llm > active-output/model.log 2>&1 || true
+          cat > active-output/run-metadata.json <<JSON
+          {
+            "github_run_id": "${GITHUB_RUN_ID}",
+            "github_sha": "${GITHUB_SHA}",
+            "model_slug": "${MODEL_SLUG}",
+            "model_label": "${MODEL_LABEL:-unknown}",
+            "incentive_condition": "${INCENTIVE_CONDITION}"
+          }
+          JSON
 
-      - name: Upload active benchmark
+      - name: Checkpoint result to benchmark-results branch
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p active-output
+          rm -rf /tmp/benchmark-result
+          mkdir -p /tmp/benchmark-result
+          cp -a active-output/. /tmp/benchmark-result/
+
+          git config user.name 'Benchmark Results Bot'
+          git config user.email 'benchmark-results@users.noreply.github.com'
+          RESULT_PATH="runs/${GITHUB_RUN_ID}/${MODEL_SLUG}/${INCENTIVE_CONDITION}"
+
+          for attempt in $(seq 1 12); do
+            git checkout --detach "$GITHUB_SHA" >/dev/null 2>&1 || true
+            git branch -D benchmark-results >/dev/null 2>&1 || true
+            git fetch origin benchmark-results:refs/remotes/origin/benchmark-results >/dev/null 2>&1 || true
+
+            if git show-ref --verify --quiet refs/remotes/origin/benchmark-results; then
+              git checkout -B benchmark-results refs/remotes/origin/benchmark-results >/dev/null
+            else
+              git checkout --orphan benchmark-results >/dev/null
+              git rm -rf . >/dev/null 2>&1 || true
+            fi
+
+            rm -rf "$RESULT_PATH"
+            mkdir -p "$RESULT_PATH"
+            cp -a /tmp/benchmark-result/. "$RESULT_PATH/"
+            git add "$RESULT_PATH"
+            git commit -m "Benchmark ${GITHUB_RUN_ID}: ${MODEL_SLUG} / ${INCENTIVE_CONDITION}" >/dev/null || true
+
+            if git push origin HEAD:benchmark-results; then
+              echo "Persisted ${RESULT_PATH}"
+              exit 0
+            fi
+            echo "Concurrent result push detected; retrying (${attempt}/12)"
+            sleep $((attempt + 1))
+          done
+
+          echo 'Unable to checkpoint benchmark result after retries.'
+          exit 1
+
+      - name: Upload active benchmark artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rails-active-${{ matrix.slug }}
+          name: rails-active-${{ matrix.model }}-${{ matrix.incentive }}
           path: active-output/
           retention-days: 3
