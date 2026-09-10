@@ -1,0 +1,225 @@
+name: Rails Orchestra benchmark
+
+on:
+  push:
+    branches: [rails-orchestra-benchmark]
+    paths:
+      - .github/workflows/rails-orchestra.yml
+      - orchestra_worker.py
+      - orchestra_setup_target.sh
+      - orchestra_start_model.sh
+      - fixtures/freshfruit_sanitized/**
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rails-orchestra-v1
+  cancel-in-progress: true
+
+jobs:
+  scouts:
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [qwen35-4b, qwen35-9b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare isolated Rails target
+        run: bash orchestra_setup_target.sh
+      - name: Start ${{ matrix.model }}
+        run: bash orchestra_start_model.sh '${{ matrix.model }}'
+      - name: Independent scout
+        env:
+          MODEL_SLUG: ${{ matrix.model }}
+          ORCHESTRA_ROLE: scout
+          ORCHESTRA_OUT: orchestra-output
+        run: python3 orchestra_worker.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scout-${{ matrix.model }}
+          path: orchestra-output/
+          retention-days: 3
+
+  ledger:
+    needs: scouts
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scout-*
+          path: scouts
+      - name: Merge independent hypotheses
+        run: |
+          python3 - <<'PY'
+          import glob,json,os
+          out={'scouts':[],'candidates':[]}
+          for p in glob.glob('scouts/**/final.json',recursive=True):
+              d=json.load(open(p)); source=p.split('/')[1]
+              out['scouts'].append({'source':source,'final':d})
+              for c in d.get('candidates',[]) or []:
+                  x=dict(c); x['source']=source; out['candidates'].append(x)
+          open('candidate-ledger.json','w').write(json.dumps(out,indent=2))
+          print(json.dumps({'candidate_count':len(out['candidates']),'sources':[x['source'] for x in out['scouts']]},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-ledger
+          path: candidate-ledger.json
+          retention-days: 3
+
+  verifier:
+    needs: ledger
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-ledger
+          path: input
+      - run: bash orchestra_setup_target.sh
+      - run: bash orchestra_start_model.sh qwen35-9b
+      - name: Independent verification
+        env:
+          MODEL_SLUG: qwen35-9b
+          ORCHESTRA_ROLE: verifier
+          ORCHESTRA_INPUT: input/candidate-ledger.json
+          ORCHESTRA_OUT: orchestra-output
+        run: python3 orchestra_worker.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verifier-output
+          path: orchestra-output/
+          retention-days: 3
+
+  patcher:
+    needs: verifier
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: verifier-output
+          path: input
+      - run: bash orchestra_setup_target.sh
+      - run: bash orchestra_start_model.sh qwen35-9b
+      - name: Patch verified defects and test
+        env:
+          MODEL_SLUG: qwen35-9b
+          ORCHESTRA_ROLE: patcher
+          ORCHESTRA_INPUT: input/final.json
+          ORCHESTRA_OUT: orchestra-output
+        run: python3 orchestra_worker.py
+      - name: Full suite after patch
+        if: always()
+        run: docker exec freshfruit-app bash -lc 'bin/rails test' | tee orchestra-output/post-patch-tests.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: patcher-output
+          path: orchestra-output/
+          retention-days: 3
+
+  reviewer:
+    needs: patcher
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: patcher-output
+          path: patch
+      - run: bash orchestra_setup_target.sh
+      - name: Apply proposed patch
+        run: |
+          test -s patch/target.diff
+          docker exec -i freshfruit-app bash -lc 'git apply -' < patch/target.diff
+          docker exec freshfruit-app bash -lc 'git diff -- .'
+      - run: bash orchestra_start_model.sh qwen35-4b
+      - name: Independent patch review
+        env:
+          MODEL_SLUG: qwen35-4b
+          ORCHESTRA_ROLE: reviewer
+          ORCHESTRA_INPUT: patch/final.json
+          ORCHESTRA_OUT: orchestra-output
+        run: python3 orchestra_worker.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reviewer-output
+          path: orchestra-output/
+          retention-days: 3
+
+  hidden-grade:
+    needs: [scouts, verifier, patcher, reviewer]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-output'
+          path: collected
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: 'scout-*'
+          path: collected/scouts
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-ledger
+          path: collected
+      - run: bash orchestra_setup_target.sh
+      - name: Apply patch and run hidden checks
+        id: grade
+        run: |
+          set +e
+          PATCH=$(find collected -path '*patcher-output*/target.diff' -o -path '*patcher-output/target.diff' | head -1)
+          mkdir -p final-result
+          cp -a collected/. final-result/collected/
+          if [ -z "$PATCH" ] || [ ! -s "$PATCH" ]; then
+            echo '{"passed":false,"reason":"missing patch"}' > final-result/grade.json
+            exit 0
+          fi
+          docker exec -i freshfruit-app bash -lc 'git apply -' < "$PATCH"
+          SUITE=0; HIDDEN=0
+          docker exec freshfruit-app bash -lc 'bin/rails test' > final-result/full-suite.txt 2>&1 && SUITE=1
+          docker exec freshfruit-app bash -lc 'bin/rails runner "u=User.create!(email:\"hidden-grade@example.com\",password:\"Passw0rd!123\",password_confirmation:\"Passw0rd!123\"); abort(\"privileged default remains\") if u.respond_to?(:superadmin?) && u.superadmin?; puts \"HIDDEN_ROLE_OK role=#{u.role}\""' > final-result/hidden-role.txt 2>&1 && HIDDEN=1
+          python3 - "$SUITE" "$HIDDEN" <<'PY'
+          import json,sys
+          suite=bool(int(sys.argv[1])); hidden=bool(int(sys.argv[2]))
+          json.dump({'passed':suite and hidden,'full_suite_passed':suite,'hidden_privilege_default_check_passed':hidden},open('final-result/grade.json','w'),indent=2)
+          PY
+          cat final-result/grade.json
+      - name: Persist complete orchestra record
+        if: always()
+        run: |
+          set -euo pipefail
+          git config user.name 'Benchmark Results Bot'
+          git config user.email 'benchmark-results@users.noreply.github.com'
+          cp -a final-result /tmp/final-result
+          for attempt in $(seq 1 12); do
+            git fetch origin benchmark-results:refs/remotes/origin/benchmark-results >/dev/null 2>&1 || true
+            if git show-ref --verify --quiet refs/remotes/origin/benchmark-results; then git checkout -B benchmark-results refs/remotes/origin/benchmark-results >/dev/null; else git checkout --orphan benchmark-results >/dev/null; git rm -rf . >/dev/null 2>&1 || true; fi
+            DEST="orchestra-runs/${GITHUB_RUN_ID}"
+            rm -rf "$DEST"; mkdir -p "$DEST"; cp -a /tmp/final-result/. "$DEST/"
+            git add "$DEST"; git commit -m "Rails Orchestra ${GITHUB_RUN_ID}" >/dev/null || true
+            git push origin HEAD:benchmark-results && exit 0
+            sleep $((attempt+1))
+          done
+          exit 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orchestra-final-result
+          path: final-result/
+          retention-days: 7
