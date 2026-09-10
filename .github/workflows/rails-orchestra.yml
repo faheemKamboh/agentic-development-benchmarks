@@ -1,0 +1,341 @@
+name: Rails Orchestra pilot
+
+on:
+  push:
+    branches: [rails-active-agent-benchmark]
+    paths:
+      - .github/workflows/rails-orchestra.yml
+      - rails_orchestra_agent.py
+      - scripts/prepare_freshfruit_runner.sh
+      - scripts/start_benchmark_model.sh
+      - scripts/capture_orchestra_state.sh
+      - scripts/grade_freshfruit_patch.sh
+      - fixtures/freshfruit_sanitized/**
+      - docs/rails-orchestra-experiment.md
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rails-orchestra-pilot-v1
+  cancel-in-progress: true
+
+jobs:
+  scout-4b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      MODEL_SLUG: qwen35-4b
+      MODEL_LABEL: Qwen3.5-4B Q4_K_M
+      MODEL_HF: bartowski/Qwen_Qwen3.5-4B-GGUF:Q4_K_M
+      ORCHESTRA_ROLE: scout
+      ORCHESTRA_WORKER: scout-4b
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/prepare_freshfruit_runner.sh
+      - run: bash scripts/start_benchmark_model.sh
+      - run: python3 rails_orchestra_agent.py
+      - name: Capture scout state
+        if: always()
+        run: bash scripts/capture_orchestra_state.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orchestra-scout-4b
+          path: orchestra-output/
+          retention-days: 3
+
+  scout-9b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    env:
+      MODEL_SLUG: qwen35-9b
+      MODEL_LABEL: Qwen3.5-9B Q4_K_M
+      MODEL_HF: bartowski/Qwen_Qwen3.5-9B-GGUF:Q4_K_M
+      ORCHESTRA_ROLE: scout
+      ORCHESTRA_WORKER: scout-9b
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/prepare_freshfruit_runner.sh
+      - run: bash scripts/start_benchmark_model.sh
+      - run: python3 rails_orchestra_agent.py
+      - name: Capture scout state
+        if: always()
+        run: bash scripts/capture_orchestra_state.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orchestra-scout-9b
+          path: orchestra-output/
+          retention-days: 3
+
+  solo-9b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      MODEL_SLUG: qwen35-9b
+      MODEL_LABEL: Qwen3.5-9B Q4_K_M
+      MODEL_HF: bartowski/Qwen_Qwen3.5-9B-GGUF:Q4_K_M
+      ORCHESTRA_ROLE: solo
+      ORCHESTRA_WORKER: solo-9b
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/prepare_freshfruit_runner.sh
+      - run: bash scripts/start_benchmark_model.sh
+      - run: python3 rails_orchestra_agent.py
+      - name: Grade solo patch
+        if: always()
+        run: bash scripts/grade_freshfruit_patch.sh orchestra-output/grade.json || true
+      - name: Capture solo state
+        if: always()
+        run: bash scripts/capture_orchestra_state.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orchestra-solo-9b
+          path: orchestra-output/
+          retention-days: 3
+
+  coordinate:
+    needs: [scout-4b, scout-9b]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: orchestra-scout-*
+          path: scout-artifacts
+      - name: Build candidate ledger
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, time
+          root=pathlib.Path('scout-artifacts')
+          candidates=[]
+          summaries=[]
+          for result in root.rglob('result.json'):
+              data=json.loads(result.read_text())
+              worker=data.get('worker') or result.parent.name
+              summaries.append({
+                  'worker':worker,
+                  'summary':data.get('final',{}).get('summary',''),
+                  'shell_step_count':data.get('shell_step_count',0),
+              })
+              for f in data.get('findings',[]):
+                  candidates.append({
+                      'source_worker':worker,
+                      'title':f.get('title',''),
+                      'severity':f.get('severity',''),
+                      'claim':f.get('claim',''),
+                      'evidence_summary':f.get('evidence_summary',''),
+                      'fix':f.get('fix',''),
+                  })
+          seen=set(); dedup=[]
+          for c in candidates:
+              key=' '.join(c['claim'].lower().split())
+              if key and key in seen:
+                  continue
+              if key: seen.add(key)
+              dedup.append(c)
+          out={'generated_at':time.time(),'scout_summaries':summaries,'candidates':dedup}
+          pathlib.Path('candidate-ledger.json').write_text(json.dumps(out,indent=2))
+          print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orchestra-candidate-ledger
+          path: candidate-ledger.json
+          retention-days: 3
+
+  verify-9b:
+    needs: [coordinate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      MODEL_SLUG: qwen35-9b
+      MODEL_LABEL: Qwen3.5-9B Q4_K_M
+      MODEL_HF: bartowski/Qwen_Qwen3.5-9B-GGUF:Q4_K_M
+      ORCHESTRA_ROLE: verifier
+      ORCHESTRA_WORKER: verifier-9b
+      ORCHESTRA_CONTEXT: candidate-ledger.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: orchestra-candidate-ledger
+          path: .
+      - run: bash scripts/prepare_freshfruit_runner.sh
+      - run: bash scripts/start_benchmark_model.sh
+      - run: python3 rails_orchestra_agent.py
+      - name: Capture verifier state
+        if: always()
+        run: bash scripts/capture_orchestra_state.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orchestra-verifier-9b
+          path: orchestra-output/
+          retention-days: 3
+
+  patch-9b:
+    needs: [verify-9b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    env:
+      MODEL_SLUG: qwen35-9b
+      MODEL_LABEL: Qwen3.5-9B Q4_K_M
+      MODEL_HF: bartowski/Qwen_Qwen3.5-9B-GGUF:Q4_K_M
+      ORCHESTRA_ROLE: patcher
+      ORCHESTRA_WORKER: patcher-9b
+      ORCHESTRA_CONTEXT: verifier-input.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: orchestra-verifier-9b
+          path: verifier-artifact
+      - name: Build patcher context
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          p=next(pathlib.Path('verifier-artifact').rglob('result.json'))
+          d=json.loads(p.read_text())
+          pathlib.Path('verifier-input.json').write_text(json.dumps({
+              'verified_candidates': d.get('findings',[]),
+              'verifier_summary': d.get('final',{}).get('summary','')
+          },indent=2))
+          PY
+      - run: bash scripts/prepare_freshfruit_runner.sh
+      - run: bash scripts/start_benchmark_model.sh
+      - run: python3 rails_orchestra_agent.py
+      - name: Grade orchestra patch before review
+        if: always()
+        run: bash scripts/grade_freshfruit_patch.sh orchestra-output/pre-review-grade.json || true
+      - name: Capture patcher state
+        if: always()
+        run: bash scripts/capture_orchestra_state.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orchestra-patcher-9b
+          path: orchestra-output/
+          retention-days: 3
+
+  review-4b:
+    needs: [patch-9b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    env:
+      MODEL_SLUG: qwen35-4b
+      MODEL_LABEL: Qwen3.5-4B Q4_K_M
+      MODEL_HF: bartowski/Qwen_Qwen3.5-4B-GGUF:Q4_K_M
+      ORCHESTRA_ROLE: reviewer
+      ORCHESTRA_WORKER: reviewer-4b
+      ORCHESTRA_CONTEXT: review-input.json
+      ORCHESTRA_READ_ONLY: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: orchestra-patcher-9b
+          path: patcher-artifact
+      - run: bash scripts/prepare_freshfruit_runner.sh
+      - name: Apply proposed patch
+        run: |
+          PATCH_FILE="$(find patcher-artifact -name target-diff.txt -print -quit)"
+          test -n "$PATCH_FILE"
+          docker cp "$PATCH_FILE" freshfruit-app:/tmp/orchestra.patch
+          docker exec freshfruit-app bash -lc 'cd /app && git apply /tmp/orchestra.patch'
+          python3 - <<'PY'
+          import json, pathlib
+          p=next(pathlib.Path('patcher-artifact').rglob('result.json'))
+          d=json.loads(p.read_text())
+          pathlib.Path('review-input.json').write_text(json.dumps({
+              'patcher_summary': d.get('final',{}).get('summary',''),
+              'claimed_findings': d.get('findings',[])
+          },indent=2))
+          PY
+      - run: bash scripts/start_benchmark_model.sh
+      - run: python3 rails_orchestra_agent.py
+      - name: Hidden deterministic grade
+        if: always()
+        run: bash scripts/grade_freshfruit_patch.sh orchestra-output/final-grade.json || true
+      - name: Capture reviewer state
+        if: always()
+        run: bash scripts/capture_orchestra_state.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orchestra-reviewer-4b
+          path: orchestra-output/
+          retention-days: 3
+
+  persist-results:
+    needs: [scout-4b, scout-9b, solo-9b, coordinate, verify-9b, patch-9b, review-4b]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: orchestra-*
+          path: all-orchestra-artifacts
+      - name: Build experiment summary
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          root=pathlib.Path('all-orchestra-artifacts')
+          summary={'github_run_id':'${{ github.run_id }}','artifacts':[]}
+          for p in root.rglob('result.json'):
+              try:
+                  d=json.loads(p.read_text())
+              except Exception:
+                  continue
+              summary['artifacts'].append({
+                  'worker':d.get('worker'),
+                  'role':d.get('role'),
+                  'model':d.get('model'),
+                  'finding_count':d.get('finding_count'),
+                  'shell_step_count':d.get('shell_step_count'),
+                  'summary':d.get('final',{}).get('summary','')
+              })
+          for p in root.rglob('*grade.json'):
+              try:
+                  g=json.loads(p.read_text())
+              except Exception:
+                  continue
+              summary.setdefault('grades',[]).append({'path':str(p.relative_to(root)),'grade':g})
+          pathlib.Path('experiment-summary.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+      - name: Commit complete run to benchmark-results
+        run: |
+          set -euo pipefail
+          git config user.name 'Benchmark Results Bot'
+          git config user.email 'benchmark-results@users.noreply.github.com'
+          RESULT_PATH="runs/${GITHUB_RUN_ID}/rails-orchestra-pilot-v1"
+          mkdir -p /tmp/orchestra-complete
+          cp -a all-orchestra-artifacts /tmp/orchestra-complete/
+          cp experiment-summary.json /tmp/orchestra-complete/
+          for attempt in $(seq 1 12); do
+            git checkout --detach "$GITHUB_SHA" >/dev/null 2>&1 || true
+            git branch -D benchmark-results >/dev/null 2>&1 || true
+            git fetch origin benchmark-results:refs/remotes/origin/benchmark-results >/dev/null 2>&1 || true
+            if git show-ref --verify --quiet refs/remotes/origin/benchmark-results; then
+              git checkout -B benchmark-results refs/remotes/origin/benchmark-results >/dev/null
+            else
+              git checkout --orphan benchmark-results >/dev/null
+              git rm -rf . >/dev/null 2>&1 || true
+            fi
+            rm -rf "$RESULT_PATH"
+            mkdir -p "$RESULT_PATH"
+            cp -a /tmp/orchestra-complete/. "$RESULT_PATH/"
+            git add "$RESULT_PATH"
+            git commit -m "Rails Orchestra pilot ${GITHUB_RUN_ID}" >/dev/null || true
+            if git push origin HEAD:benchmark-results; then exit 0; fi
+            sleep $((attempt+1))
+          done
+          exit 1
