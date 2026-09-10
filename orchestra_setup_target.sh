@@ -13,7 +13,14 @@ chmod +x "$TARGET/bin/rails"
 (cd "$TARGET" && git add bin/rails && git commit -qm 'Add executable Rails command')
 cat >"$TARGET/Dockerfile.benchmark" <<'DOCKER'
 FROM ruby:3.0.6-bullseye
-RUN set -eux; for attempt in 1 2 3; do apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential libpq-dev postgresql-client git curl && break; rm -rf /var/lib/apt/lists/*; sleep 3; done; command -v psql; rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99benchmark-expired-metadata; \
+    for attempt in 1 2 3; do \
+      apt-get -o Acquire::Check-Valid-Until=false update && \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential libpq-dev postgresql-client git curl && break; \
+      rm -rf /var/lib/apt/lists/*; sleep 3; \
+    done; \
+    command -v psql; rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY Gemfile ./
 RUN gem install bundler -v 2.4.22 --no-document && bundle _2.4.22_ install --jobs 4 --retry 3
