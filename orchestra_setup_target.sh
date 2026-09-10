@@ -17,10 +17,10 @@ RUN set -eux; \
     printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99benchmark-expired-metadata; \
     for attempt in 1 2 3; do \
       apt-get -o Acquire::Check-Valid-Until=false update && \
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential libpq-dev postgresql-client git curl && break; \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential libpq-dev git curl && break; \
       rm -rf /var/lib/apt/lists/*; sleep 3; \
     done; \
-    command -v psql; rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY Gemfile ./
 RUN gem install bundler -v 2.4.22 --no-document && bundle _2.4.22_ install --jobs 4 --retry 3
