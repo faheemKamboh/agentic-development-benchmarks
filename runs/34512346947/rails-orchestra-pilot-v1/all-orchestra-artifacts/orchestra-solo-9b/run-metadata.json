@@ -1,0 +1,8 @@
+{
+  "github_run_id": "34512346947",
+  "github_sha": "08cfb493f614a6dc9c6c6b94f86a62d4ba3dcd35",
+  "model_slug": "qwen35-9b",
+  "model_label": "Qwen3.5-9B Q4_K_M",
+  "role": "solo",
+  "worker": "solo-9b"
+}
